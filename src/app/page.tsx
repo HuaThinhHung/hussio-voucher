@@ -2,9 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardData, DiscountSummary, VoucherCode } from "@/lib/types";
+import QrCode, { downloadQrPng, qrSvgMarkup } from "@/components/QrCode";
 
 type Filter = "all" | "used" | "unused";
 const DOMAIN = "hussio.com";
+
+// Link áp mã (khách bấm là tự áp voucher) — cũng là nội dung mã QR.
+const voucherLink = (code: string) => `https://${DOMAIN}/discount/${code}`;
 
 // ==== Icon SVG (không dùng emoji) ====
 const IArrow = () => (
@@ -25,6 +29,21 @@ const ISun = () => (
 const IMoon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
 );
+const IQr = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 14h3v3M20 14v.01M14 20h.01M17 20h3v-3" /></svg>
+);
+const ICopy = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+);
+const IDownload = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
+);
+const IPrint = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" rx="1" /></svg>
+);
+const IClose = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+);
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -35,6 +54,8 @@ export default function DashboardPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [qrRow, setQrRow] = useState<VoucherCode | null>(null); // mã đang xem QR
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const stored = (typeof window !== "undefined"
@@ -74,6 +95,14 @@ export default function DashboardPage() {
   useEffect(() => {
     load();
   }, []);
+
+  // Đóng modal QR bằng phím Esc.
+  useEffect(() => {
+    if (!qrRow) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setQrRow(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [qrRow]);
 
   async function logout() {
     await fetch("/api/login", { method: "DELETE" });
@@ -134,6 +163,53 @@ export default function DashboardPage() {
 
   const exportUrl = (fmt: "xlsx" | "csv", unused = false) =>
     `/api/export?format=${fmt}${selectedId ? `&discountId=${encodeURIComponent(selectedId)}` : ""}${unused ? "&status=unused" : ""}`;
+
+  // Sao chép link áp mã vào clipboard.
+  async function copyLink(code: string) {
+    try {
+      await navigator.clipboard.writeText(voucherLink(code));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* trình duyệt cũ không hỗ trợ — bỏ qua */
+    }
+  }
+
+  // Mở trang in gồm toàn bộ mã QR đang hiển thị (kèm mã voucher dưới mỗi QR).
+  function printQrSheet() {
+    const win = window.open("", "_blank");
+    if (!win) return;
+    const cards = rows
+      .map(
+        (c) =>
+          `<div class="card"><div class="qr">${qrSvgMarkup(
+            voucherLink(c.code),
+            4,
+            2
+          )}</div><div class="code">${c.code}</div></div>`
+      )
+      .join("");
+    const heading = selected ? selected.title : "Voucher HUSSIO";
+    win.document.write(
+      `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Mã QR — ${heading}</title>
+      <style>
+        *{box-sizing:border-box} body{font-family:Segoe UI,system-ui,Arial,sans-serif;margin:24px;color:#15142c}
+        h1{font-size:18px;margin:0 0 4px} p{margin:0 0 18px;color:#6a6a84;font-size:12px}
+        .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+        .card{border:1px solid #e0e0ee;border-radius:10px;padding:10px;text-align:center;page-break-inside:avoid}
+        .qr{display:flex;justify-content:center}
+        .qr svg{width:100%;height:auto;max-width:150px}
+        .code{margin-top:6px;font-family:Consolas,monospace;font-size:11px;word-break:break-all}
+        @media print{@page{margin:12mm}}
+      </style></head>
+      <body onload="setTimeout(function(){window.print()},250)">
+        <h1>${heading} — Mã QR</h1>
+        <p>${rows.length} mã · quét QR để mở link áp voucher</p>
+        <div class="grid">${cards}</div>
+      </body></html>`
+    );
+    win.document.close();
+  }
 
   return (
     <div className="vc-app">
@@ -209,13 +285,16 @@ export default function DashboardPage() {
             </div>
             <a className="vc-btn" href={exportUrl("xlsx")}>Xuất Excel</a>
             <a className="vc-btn" href={exportUrl("xlsx", true)}>Chưa dùng</a>
+            <button className="vc-btn" onClick={printQrSheet} disabled={rows.length === 0}>
+              <IPrint /> In QR
+            </button>
           </div>
           <div className="vc-count">Hiển thị {rows.length} / {selCodes.length} mã</div>
 
           <div className="vc-panel">
             <div className="vc-scroll tall">
               <table>
-                <thead><tr><th style={{ width: 58 }}>STT</th><th>Mã voucher</th><th>Trạng thái</th><th>Link áp mã</th></tr></thead>
+                <thead><tr><th style={{ width: 58 }}>STT</th><th>Mã voucher</th><th>Trạng thái</th><th>Link áp mã</th><th style={{ width: 64 }} className="c">QR</th></tr></thead>
                 <tbody>
                   {rows.map((c, i) => (
                     <tr key={c.code}>
@@ -226,7 +305,17 @@ export default function DashboardPage() {
                           ? <span className="pill used"><span className="dotp" />Đã dùng</span>
                           : <span className="pill unused"><span className="dotp" />Chưa dùng</span>}
                       </td>
-                      <td><a href={`https://${DOMAIN}/discount/${c.code}`} target="_blank" rel="noopener noreferrer">/discount/{c.code}</a></td>
+                      <td><a href={voucherLink(c.code)} target="_blank" rel="noopener noreferrer">/discount/{c.code}</a></td>
+                      <td className="c">
+                        <button
+                          className="vc-qrbtn"
+                          onClick={() => { setCopied(false); setQrRow(c); }}
+                          title={`Xem / tải QR mã ${c.code}`}
+                          aria-label={`Xem mã QR cho ${c.code}`}
+                        >
+                          <QrCode text={voucherLink(c.code)} size={40} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -284,6 +373,27 @@ export default function DashboardPage() {
       <footer className="vc-foot">
         Dữ liệu từ <b>Shopify</b> HUSSIO{data?.source === "snapshot" ? " (ảnh chụp demo)" : " (realtime)"} · bấm <b>Tải lại</b> để cập nhật.
       </footer>
+
+      {/* ===== Modal xem / tải QR 1 mã ===== */}
+      {qrRow && (
+        <div className="vc-ov" onClick={() => setQrRow(null)}>
+          <div className="vc-qrmodal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Mã QR ${qrRow.code}`}>
+            <button className="vc-qrx" onClick={() => setQrRow(null)} aria-label="Đóng"><IClose /></button>
+            <div className="vc-qrbig"><QrCode text={voucherLink(qrRow.code)} size={220} margin={2} /></div>
+            <div className="vc-qrcode mono">{qrRow.code}</div>
+            <div className="vc-qrlink">{voucherLink(qrRow.code)}</div>
+            <div className="vc-qracts">
+              <button className="vc-btn" onClick={() => downloadQrPng(voucherLink(qrRow.code), `HUSSIO_QR_${qrRow.code}.png`)}>
+                <IDownload /> Tải PNG
+              </button>
+              <button className="vc-btn" onClick={() => copyLink(qrRow.code)}>
+                <ICopy /> {copied ? "Đã sao chép!" : "Sao chép link"}
+              </button>
+              <a className="vc-btn ghost" href={voucherLink(qrRow.code)} target="_blank" rel="noopener noreferrer">Mở link</a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

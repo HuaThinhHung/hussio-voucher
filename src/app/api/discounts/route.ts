@@ -36,8 +36,14 @@ export async function GET() {
       source: "live",
     };
     return NextResponse.json(data);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Lỗi không xác định";
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch {
+    // Token lỗi/hết hạn (vd 401) -> quay về ảnh chụp demo để web vẫn xem được.
+    const assignments = await readAssignments().catch(() => ({}));
+    const data: DashboardData = {
+      discounts: snapshotData.discounts,
+      codes: mergeAssignments(snapshotData.codes, assignments),
+      source: "snapshot",
+    };
+    return NextResponse.json(data);
   }
 }

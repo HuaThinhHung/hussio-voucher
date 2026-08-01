@@ -155,6 +155,23 @@ body { font-family: var(--font); line-height: 1.5; -webkit-font-smoothing: antia
 .vc-icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .vc-icon-btn:active { transform: translateY(1px); }
 
+/* ===== Cột QR trong bảng mã ===== */
+.vc-app th.c, .vc-app td.c { text-align: center; }
+.vc-qrbtn { display: inline-grid; place-items: center; padding: 4px; border: 1px solid var(--border); background: #fff; border-radius: 9px; cursor: pointer; line-height: 0; transition: transform .12s, box-shadow .18s, border-color .18s; }
+.vc-qrbtn:hover { transform: translateY(-1px); border-color: var(--accent); box-shadow: var(--shadow); }
+.vc-qrbtn:active { transform: translateY(0); }
+.vc-qrbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Lớp phủ + hộp thoại QR */
+.vc-ov { position: fixed; inset: 0; background: rgba(8, 8, 22, .55); backdrop-filter: blur(2px); display: grid; place-items: center; padding: 20px; z-index: 50; animation: vcFadeUp .2s ease both; }
+.vc-qrmodal { position: relative; width: 100%; max-width: 320px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); padding: 26px 24px 22px; text-align: center; }
+.vc-qrx { position: absolute; top: 12px; right: 12px; display: grid; place-items: center; width: 32px; height: 32px; border: 0; background: var(--surface-2); color: var(--muted); border-radius: 9px; cursor: pointer; transition: color .15s, background .15s; }
+.vc-qrx:hover { color: var(--text); background: var(--border); }
+.vc-qrbig { display: inline-flex; padding: 12px; background: #fff; border: 1px solid var(--border); border-radius: 14px; line-height: 0; }
+.vc-qrcode { margin-top: 14px; font-size: 15px; font-weight: 700; letter-spacing: .2px; }
+.vc-qrlink { margin-top: 4px; font-size: 11.5px; color: var(--muted); word-break: break-all; }
+.vc-qracts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+
 /* ===== Login ===== */
 .vc-login { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
 .vc-login-top { position: fixed; top: 18px; right: 18px; }

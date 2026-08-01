@@ -16,10 +16,15 @@ export async function GET(req: NextRequest) {
     const format = (searchParams.get("format") || "xlsx").toLowerCase();
     const status = (searchParams.get("status") || "").toLowerCase();
 
-    // Có token -> lấy realtime; chưa có -> xuất từ snapshot demo.
-    const codes = isShopifyConfigured()
-      ? (await listVoucherDiscounts()).codes
-      : snapshotData.codes;
+    // Có token -> lấy realtime; chưa có / token lỗi -> xuất từ snapshot demo.
+    let codes = snapshotData.codes;
+    if (isShopifyConfigured()) {
+      try {
+        codes = (await listVoucherDiscounts()).codes;
+      } catch {
+        codes = snapshotData.codes; // token hết hạn (401) -> dùng demo
+      }
+    }
     const assignments = await readAssignments().catch(
       () => ({}) as Record<string, Assignment>
     );
