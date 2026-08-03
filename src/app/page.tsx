@@ -348,7 +348,7 @@ export default function DashboardPage() {
                 <tbody>
                   {discounts.map((d) => {
                     const n = codeCountBy.get(d.id) || 0;
-                    const drill = n > 1;
+                    const drill = n >= 1;
                     return (
                       <tr key={d.id} className={drill ? "clk" : ""} onClick={drill ? () => open(d.id) : undefined}>
                         <td><div className="vc-pname">{d.title}{d.method ? <span className="m">{d.method}</span> : null}</div></td>
