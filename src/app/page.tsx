@@ -8,9 +8,28 @@ import { buildVoucherUrl } from "@/lib/voucher-url";
 import { discountStatusLabel, summarizeLoyalty } from "@/lib/dashboard";
 
 type Filter = "all" | "used" | "unused";
+type ExportFormat = "xlsx" | "xls" | "csv";
 const PAGE_SIZE = 100;
 const EMPTY_DISCOUNTS: DashboardData["discounts"] = [];
 const EMPTY_CODES: DashboardData["codes"] = [];
+
+// Các cột có thể tích chọn khi xuất file (key khớp param ?columns của /api/export).
+const EXPORT_COLUMNS = [
+  { key: "stt", label: "STT" },
+  { key: "code", label: "Mã voucher" },
+  { key: "program", label: "Chương trình" },
+  { key: "link", label: "Link áp mã" },
+  { key: "status", label: "Trạng thái" },
+  { key: "used", label: "Lượt đã dùng" },
+  { key: "phone", label: "Khách nhận (SĐT)" },
+  { key: "name", label: "Tên khách" },
+  { key: "note", label: "Ghi chú" },
+] as const;
+const EXPORT_FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: "xlsx", label: "Excel .xlsx" },
+  { value: "xls", label: "Excel .xls" },
+  { value: "csv", label: "CSV" },
+];
 
 // Link áp mã (khách bấm là tự áp voucher) — cũng là nội dung mã QR.
 const voucherLink = (domain: string | undefined, code: string) => buildVoucherUrl(domain, code);
@@ -59,6 +78,9 @@ const IPrint = () => (
 const IClose = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
 );
+const ICaret = () => (
+  <svg className="vc-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+);
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -75,6 +97,14 @@ export default function DashboardPage() {
   const qrDialogRef = useRef<HTMLDivElement>(null);
   const qrCloseRef = useRef<HTMLButtonElement>(null);
   const lastQrTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  // Panel xuất file: chọn định dạng + tích cột muốn xuất.
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("xlsx");
+  const [exportCols, setExportCols] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(EXPORT_COLUMNS.map((col) => [col.key, true]))
+  );
+  const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("vc-theme") as "light" | "dark" | null;
@@ -132,6 +162,30 @@ export default function DashboardPage() {
       lastQrTriggerRef.current?.focus();
     };
   }, [qrRow]);
+
+  // Đóng panel xuất file khi bấm ra ngoài hoặc nhấn Esc.
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setExportOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [exportOpen]);
+
+  const exportColCount = EXPORT_COLUMNS.filter((col) => exportCols[col.key]).length;
+  function setAllExportCols(value: boolean) {
+    setExportCols(Object.fromEntries(EXPORT_COLUMNS.map((col) => [col.key, value])));
+  }
+  // Preset cho Zalo: chỉ cần cột mã giảm.
+  function presetOnlyCode() {
+    setExportCols(Object.fromEntries(EXPORT_COLUMNS.map((col) => [col.key, col.key === "code"])));
+  }
 
   function trapModalFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Tab") return;
@@ -209,12 +263,17 @@ export default function DashboardPage() {
     window.scrollTo(0, 0);
   }
 
-  const exportUrl = (fmt: "xlsx" | "csv", unused = false) => {
-    const params = new URLSearchParams({ format: fmt });
+  // Dựng URL tải file theo định dạng + cột đã chọn, tôn trọng bộ lọc đang xem.
+  const buildExportUrl = () => {
+    const params = new URLSearchParams({ format: exportFormat });
     if (selectedId) params.set("discountId", selectedId);
-    const exportStatus = unused ? "unused" : filter === "all" ? "" : filter;
-    if (exportStatus) params.set("status", exportStatus);
-    if (!unused && search.trim()) params.set("search", search.trim());
+    if (filter !== "all") params.set("status", filter);
+    if (search.trim()) params.set("search", search.trim());
+    const chosen = EXPORT_COLUMNS.filter((col) => exportCols[col.key]).map((col) => col.key);
+    // Chỉ gắn columns khi không phải "chọn tất cả" (URL gọn + giữ mặc định cũ).
+    if (chosen.length && chosen.length < EXPORT_COLUMNS.length) {
+      params.set("columns", chosen.join(","));
+    }
     return `/api/export?${params.toString()}`;
   };
 
@@ -345,9 +404,75 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <a className="vc-btn" href={exportUrl("xlsx")}>Xuất Excel</a>
-            <a className="vc-btn" href={exportUrl("xlsx", true)}>Chưa dùng</a>
-            <a className="vc-btn" href={exportUrl("csv")}>Xuất CSV</a>
+            <div className="vc-export" ref={exportRef}>
+              <button
+                className="vc-btn"
+                onClick={() => setExportOpen((v) => !v)}
+                aria-expanded={exportOpen}
+                aria-haspopup="dialog"
+              >
+                <IDownload /> Xuất file <ICaret />
+              </button>
+              {exportOpen && (
+                <div className="vc-export-pop" role="dialog" aria-label="Tuỳ chọn xuất file">
+                  <div className="vc-export-row">
+                    <span className="vc-export-h">Định dạng</span>
+                    <div className="vc-seg">
+                      {EXPORT_FORMATS.map((f) => (
+                        <button
+                          key={f.value}
+                          className={exportFormat === f.value ? "act" : ""}
+                          onClick={() => setExportFormat(f.value)}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="vc-export-row">
+                    <div className="vc-export-htop">
+                      <span className="vc-export-h">Cột xuất ra file</span>
+                      <div className="vc-export-presets">
+                        <button type="button" onClick={presetOnlyCode}>Chỉ mã (Zalo)</button>
+                        <button type="button" onClick={() => setAllExportCols(true)}>Tất cả</button>
+                      </div>
+                    </div>
+                    <div className="vc-export-cols">
+                      {EXPORT_COLUMNS.map((col) => (
+                        <label key={col.key} className="vc-check">
+                          <input
+                            type="checkbox"
+                            checked={!!exportCols[col.key]}
+                            onChange={(e) =>
+                              setExportCols((prev) => ({ ...prev, [col.key]: e.target.checked }))
+                            }
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <a
+                    className={`vc-btn primary vc-export-go${exportColCount === 0 ? " disabled" : ""}`}
+                    href={exportColCount === 0 ? undefined : buildExportUrl()}
+                    aria-disabled={exportColCount === 0}
+                    onClick={(e) => {
+                      if (exportColCount === 0) { e.preventDefault(); return; }
+                      setExportOpen(false);
+                    }}
+                  >
+                    <IDownload /> Tải xuống{exportColCount > 0 ? ` (${exportColCount} cột)` : ""}
+                  </a>
+                  <p className="vc-export-hint">
+                    File lấy theo đúng bộ lọc đang xem
+                    {filter !== "all" ? ` · ${filter === "used" ? "đã dùng" : "chưa dùng"}` : ""}
+                    {search.trim() ? ` · tìm "${search.trim()}"` : ""}.
+                  </p>
+                </div>
+              )}
+            </div>
             <button className="vc-btn" onClick={printQrSheet} disabled={pageRows.length === 0}>
               <IPrint /> In QR trang này
             </button>
@@ -429,12 +554,25 @@ export default function DashboardPage() {
                     const n = codeCountBy.get(d.id) || 0;
                     const drill = n >= 1;
                     return (
-                      <tr key={d.id}>
-                        <td>{drill ? (
-                          <button className="vc-program-button" onClick={() => open(d.id)}>
-                            <span className="vc-pname">{d.title}{d.method ? <span className="m">{d.method}</span> : null}</span>
-                          </button>
-                        ) : <div className="vc-pname">{d.title}{d.method ? <span className="m">{d.method}</span> : null}</div>}</td>
+                      <tr
+                        key={d.id}
+                        className={drill ? "clk" : undefined}
+                        role={drill ? "button" : undefined}
+                        tabIndex={drill ? 0 : undefined}
+                        aria-label={drill ? `Xem ${n} mã của ${d.title}` : undefined}
+                        onClick={drill ? () => open(d.id) : undefined}
+                        onKeyDown={
+                          drill
+                            ? (e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  open(d.id);
+                                }
+                              }
+                            : undefined
+                        }
+                      >
+                        <td><div className="vc-pname">{d.title}{d.method ? <span className="m">{d.method}</span> : null}</div></td>
                         <td><span className="tag">{d.kind === "automatic" ? "Tự động" : "Mã"}</span></td>
                         <td><span className={`pill ${d.status === "ACTIVE" ? "on" : "off"}`}>{d.status === "ACTIVE" && <span className="dotp" />}{discountStatusLabel(d.status)}</span></td>
                         <td className="r num">{d.kind === "automatic" ? "—" : d.totalCodes}</td>
