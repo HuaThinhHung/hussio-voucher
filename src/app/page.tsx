@@ -1,14 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { DashboardData, DiscountSummary, VoucherCode } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { DashboardData, VoucherCode } from "@/lib/types";
 import QrCode, { downloadQrPng, qrSvgMarkup } from "@/components/QrCode";
+import { buildVoucherUrl } from "@/lib/voucher-url";
+import { discountStatusLabel, summarizeLoyalty } from "@/lib/dashboard";
 
 type Filter = "all" | "used" | "unused";
-const DOMAIN = "hussio.com";
+const PAGE_SIZE = 100;
+const EMPTY_DISCOUNTS: DashboardData["discounts"] = [];
+const EMPTY_CODES: DashboardData["codes"] = [];
 
 // Link áp mã (khách bấm là tự áp voucher) — cũng là nội dung mã QR.
-const voucherLink = (code: string) => `https://${DOMAIN}/discount/${code}`;
+const voucherLink = (domain: string | undefined, code: string) => buildVoucherUrl(domain, code);
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;",
+  })[char] || char);
+}
 
 // ==== Icon SVG (không dùng emoji) ====
 const IArrow = () => (
@@ -53,18 +68,21 @@ export default function DashboardPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [qrRow, setQrRow] = useState<VoucherCode | null>(null); // mã đang xem QR
   const [copied, setCopied] = useState(false);
+  const qrDialogRef = useRef<HTMLDivElement>(null);
+  const qrCloseRef = useRef<HTMLButtonElement>(null);
+  const lastQrTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    const stored = (typeof window !== "undefined"
-      ? (localStorage.getItem("vc-theme") as "light" | "dark" | null)
-      : null);
-    const sys = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    const t = stored || sys;
-    setTheme(t);
-    document.documentElement.setAttribute("data-theme", t);
+    const stored = localStorage.getItem("vc-theme") as "light" | "dark" | null;
+    const nextTheme = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    // Đồng bộ state với theme đã áp dụng sớm trong layout mà không làm lệch hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTheme(nextTheme);
+    document.documentElement.setAttribute("data-theme", nextTheme);
   }, []);
 
   function toggleTheme() {
@@ -83,6 +101,11 @@ export default function DashboardPage() {
     setError(null);
     try {
       const res = await fetch("/api/discounts", { cache: "no-store" });
+      // Session hết hạn / bị đăng xuất -> quay về trang đăng nhập thay vì kẹt ở banner lỗi.
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || "Không tải được dữ liệu");
       setData(j as DashboardData);
@@ -93,24 +116,47 @@ export default function DashboardPage() {
     }
   }
   useEffect(() => {
+    // Tải dữ liệu lần đầu khi dashboard được gắn vào DOM.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, []);
 
-  // Đóng modal QR bằng phím Esc.
+  // Giữ focus trong modal, hỗ trợ Esc và trả focus về nút đã mở modal.
   useEffect(() => {
     if (!qrRow) return;
+    qrCloseRef.current?.focus();
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setQrRow(null); };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      lastQrTriggerRef.current?.focus();
+    };
   }, [qrRow]);
+
+  function trapModalFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(
+      qrDialogRef.current?.querySelectorAll<HTMLElement>("button, a[href]") || []
+    ).filter((element) => !element.hasAttribute("disabled"));
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   async function logout() {
     await fetch("/api/login", { method: "DELETE" });
     window.location.href = "/login";
   }
 
-  const discounts = data?.discounts ?? [];
-  const codes = data?.codes ?? [];
+  const discounts = data?.discounts ?? EMPTY_DISCOUNTS;
+  const codes = data?.codes ?? EMPTY_CODES;
 
   // Chương trình có danh sách mã (kéo vào xem chi tiết được)
   const codeCountBy = useMemo(() => {
@@ -119,19 +165,16 @@ export default function DashboardPage() {
     return m;
   }, [codes]);
 
-  // Chương trình loyalty = discount nhiều mã nhất
-  const loyalty = useMemo<DiscountSummary | null>(() => {
-    let best: DiscountSummary | null = null;
-    for (const d of discounts) if (!best || d.totalCodes > best.totalCodes) best = d;
-    return best;
-  }, [discounts]);
+  // Loyalty hiện là các chương trình bulk-code dùng một lần.
+  const loyalty = useMemo(() => summarizeLoyalty(discounts), [discounts]);
 
   const activeCount = discounts.filter((d) => d.status === "ACTIVE").length;
-  const lTotal = loyalty?.totalCodes ?? 0;
-  const lUsed = loyalty?.totalUsed ?? 0;
+  const lTotal = loyalty.totalCodes;
+  const lUsed = loyalty.totalUsed;
   const lRate = lTotal ? Math.round((lUsed / lTotal) * 100) : 0;
 
   const selected = discounts.find((d) => d.id === selectedId) || null;
+  const selectedSingleUse = selected?.usageLimit === 1;
   const selCodes = useMemo(
     () => codes.filter((c) => c.discountId === selectedId),
     [codes, selectedId]
@@ -150,10 +193,15 @@ export default function DashboardPage() {
     });
   }, [selCodes, filter, search]);
 
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageRows = rows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   function open(id: string) {
     setSelectedId(id);
     setFilter("all");
     setSearch("");
+    setPage(1);
     window.scrollTo(0, 0);
   }
   function back() {
@@ -161,35 +209,44 @@ export default function DashboardPage() {
     window.scrollTo(0, 0);
   }
 
-  const exportUrl = (fmt: "xlsx" | "csv", unused = false) =>
-    `/api/export?format=${fmt}${selectedId ? `&discountId=${encodeURIComponent(selectedId)}` : ""}${unused ? "&status=unused" : ""}`;
+  const exportUrl = (fmt: "xlsx" | "csv", unused = false) => {
+    const params = new URLSearchParams({ format: fmt });
+    if (selectedId) params.set("discountId", selectedId);
+    const exportStatus = unused ? "unused" : filter === "all" ? "" : filter;
+    if (exportStatus) params.set("status", exportStatus);
+    if (!unused && search.trim()) params.set("search", search.trim());
+    return `/api/export?${params.toString()}`;
+  };
 
   // Sao chép link áp mã vào clipboard.
   async function copyLink(code: string) {
     try {
-      await navigator.clipboard.writeText(voucherLink(code));
+      await navigator.clipboard.writeText(voucherLink(data?.publicDomain, code));
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      /* trình duyệt cũ không hỗ trợ — bỏ qua */
+      setError("Trình duyệt không cho phép sao chép. Hãy sao chép link thủ công.");
     }
   }
 
   // Mở trang in gồm toàn bộ mã QR đang hiển thị (kèm mã voucher dưới mỗi QR).
   function printQrSheet() {
     const win = window.open("", "_blank");
-    if (!win) return;
-    const cards = rows
+    if (!win) {
+      setError("Trình duyệt đang chặn cửa sổ in. Hãy cho phép popup rồi thử lại.");
+      return;
+    }
+    const cards = pageRows
       .map(
         (c) =>
           `<div class="card"><div class="qr">${qrSvgMarkup(
-            voucherLink(c.code),
+            voucherLink(data?.publicDomain, c.code),
             4,
             2
-          )}</div><div class="code">${c.code}</div></div>`
+          )}</div><div class="code">${escapeHtml(c.code)}</div></div>`
       )
       .join("");
-    const heading = selected ? selected.title : "Voucher HUSSIO";
+    const heading = escapeHtml(selected ? selected.title : "Voucher HUSSIO");
     win.document.write(
       `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Mã QR — ${heading}</title>
       <style>
@@ -204,7 +261,7 @@ export default function DashboardPage() {
       </style></head>
       <body onload="setTimeout(function(){window.print()},250)">
         <h1>${heading} — Mã QR</h1>
-        <p>${rows.length} mã · quét QR để mở link áp voucher</p>
+        <p>${pageRows.length} mã · trang ${safePage}/${pageCount} · quét QR để mở link áp voucher</p>
         <div class="grid">${cards}</div>
       </body></html>`
     );
@@ -230,7 +287,7 @@ export default function DashboardPage() {
             {theme === "dark" ? <ISun /> : <IMoon />}
           </button>
           <button className="vc-btn" onClick={load} disabled={loading}>
-            <IReload /> {loading ? "Đang tải…" : "Tải lại"}
+            <IReload /> {loading ? "Đang tải…" : data?.source === "snapshot" ? "Đọc lại snapshot" : "Tải lại"}
           </button>
           <button className="vc-btn ghost" onClick={logout}>Đăng xuất</button>
         </div>
@@ -241,7 +298,7 @@ export default function DashboardPage() {
       {error && <div className="vc-banner err">{error}</div>}
 
       {loading && !data ? (
-        <div className="vc-panel"><div className="vc-empty">Đang tải dữ liệu từ Shopify…</div></div>
+        <div className="vc-panel"><div className="vc-empty">Đang tải dữ liệu voucher…</div></div>
       ) : selected ? (
         /* ===== DETAIL ===== */
         <section className="rise">
@@ -250,21 +307,24 @@ export default function DashboardPage() {
           </button>
           <div className="vc-dtop">
             <h1>{selected.title}</h1>
-            {selected.status === "ACTIVE" ? (
-              <span className="pill on"><span className="dotp" />Đang chạy</span>
-            ) : (
-              <span className="pill off">Hết hạn</span>
-            )}
+            <span className={`pill ${selected.status === "ACTIVE" ? "on" : "off"}`}>
+              {selected.status === "ACTIVE" && <span className="dotp" />}
+              {discountStatusLabel(selected.status)}
+            </span>
             {selected.usageLimit === 1 && <span className="tag">Mỗi mã dùng 1 lần</span>}
           </div>
-          <p className="vc-dsub">{selCodes.length} mã · 1 mã đã dùng = 1 khách đã đổi voucher.</p>
+          <p className="vc-dsub">
+            {selCodes.length} mã · {selectedSingleUse
+              ? "1 mã đã dùng = 1 khách đã đổi voucher."
+              : "Lượt sử dụng được Shopify cập nhật theo từng mã."}
+          </p>
 
           <div className="vc-meter">
             <div className="big">{selRate}%<small>đã đổi</small></div>
             <div>
               <div className="vc-mstats">
-                <div className="s good"><div className="k">Đã dùng</div><div className="n">{selUsed}</div></div>
-                <div className="s gold"><div className="k">Chưa dùng</div><div className="n">{selUnused}</div></div>
+                <div className="s good"><div className="k">{selectedSingleUse ? "Đã dùng" : "Có lượt dùng"}</div><div className="n">{selUsed}</div></div>
+                <div className="s gold"><div className="k">{selectedSingleUse ? "Chưa dùng" : "Chưa có lượt"}</div><div className="n">{selUnused}</div></div>
                 <div className="s"><div className="k">Tổng mã</div><div className="n">{selCodes.length}</div></div>
               </div>
               <div className="vc-bar"><i style={{ width: `${selRate}%` }} /></div>
@@ -274,54 +334,73 @@ export default function DashboardPage() {
           <div className="vc-tools">
             <div className="vc-field">
               <ISearch />
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm mã… (vd 057)" />
+              <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Tìm mã… (vd 057)" />
             </div>
             <div className="vc-seg">
               {(["all", "used", "unused"] as Filter[]).map((f) => (
-                <button key={f} className={filter === f ? "act" : ""} onClick={() => setFilter(f)}>
-                  {f === "all" ? "Tất cả" : f === "used" ? "Đã dùng" : "Chưa dùng"}
+                <button key={f} aria-pressed={filter === f} className={filter === f ? "act" : ""} onClick={() => { setFilter(f); setPage(1); }}>
+                  {f === "all" ? "Tất cả" : f === "used"
+                    ? selectedSingleUse ? "Đã dùng" : "Có lượt dùng"
+                    : selectedSingleUse ? "Chưa dùng" : "Chưa có lượt"}
                 </button>
               ))}
             </div>
             <a className="vc-btn" href={exportUrl("xlsx")}>Xuất Excel</a>
             <a className="vc-btn" href={exportUrl("xlsx", true)}>Chưa dùng</a>
-            <button className="vc-btn" onClick={printQrSheet} disabled={rows.length === 0}>
-              <IPrint /> In QR
+            <a className="vc-btn" href={exportUrl("csv")}>Xuất CSV</a>
+            <button className="vc-btn" onClick={printQrSheet} disabled={pageRows.length === 0}>
+              <IPrint /> In QR trang này
             </button>
           </div>
-          <div className="vc-count">Hiển thị {rows.length} / {selCodes.length} mã</div>
+          <div className="vc-count">
+            Hiển thị {rows.length ? (safePage - 1) * PAGE_SIZE + 1 : 0}–{Math.min(safePage * PAGE_SIZE, rows.length)} / {rows.length} kết quả
+          </div>
 
           <div className="vc-panel">
             <div className="vc-scroll tall">
               <table>
                 <thead><tr><th style={{ width: 58 }}>STT</th><th>Mã voucher</th><th>Trạng thái</th><th>Link áp mã</th><th style={{ width: 64 }} className="c">QR</th></tr></thead>
                 <tbody>
-                  {rows.map((c, i) => (
+                  {pageRows.map((c, i) => (
                     <tr key={c.code}>
-                      <td className="num">{i + 1}</td>
+                      <td className="num">{(safePage - 1) * PAGE_SIZE + i + 1}</td>
                       <td className="mono">{c.code}</td>
                       <td>
                         {c.used
-                          ? <span className="pill used"><span className="dotp" />Đã dùng</span>
-                          : <span className="pill unused"><span className="dotp" />Chưa dùng</span>}
+                          ? <span className="pill used"><span className="dotp" />{selectedSingleUse ? "Đã dùng" : "Có lượt dùng"}</span>
+                          : <span className="pill unused"><span className="dotp" />{selectedSingleUse ? "Chưa dùng" : "Chưa có lượt"}</span>}
                       </td>
-                      <td><a href={voucherLink(c.code)} target="_blank" rel="noopener noreferrer">/discount/{c.code}</a></td>
+                      <td><a href={voucherLink(data?.publicDomain, c.code)} target="_blank" rel="noopener noreferrer">/discount/{c.code}</a></td>
                       <td className="c">
                         <button
                           className="vc-qrbtn"
-                          onClick={() => { setCopied(false); setQrRow(c); }}
+                          onClick={(event) => {
+                            lastQrTriggerRef.current = event.currentTarget;
+                            setCopied(false);
+                            setQrRow(c);
+                          }}
                           title={`Xem / tải QR mã ${c.code}`}
                           aria-label={`Xem mã QR cho ${c.code}`}
                         >
-                          <QrCode text={voucherLink(c.code)} size={40} />
+                          <IQr />
                         </button>
                       </td>
                     </tr>
                   ))}
+                  {pageRows.length === 0 && (
+                    <tr><td colSpan={5}><div className="vc-empty">Không tìm thấy voucher phù hợp.</div></td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
+          {pageCount > 1 && (
+            <nav className="vc-pagination" aria-label="Phân trang voucher">
+              <button className="vc-btn" onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1}>Trang trước</button>
+              <span>Trang {safePage} / {pageCount}</span>
+              <button className="vc-btn" onClick={() => setPage(Math.min(pageCount, safePage + 1))} disabled={safePage === pageCount}>Trang sau</button>
+            </nav>
+          )}
         </section>
       ) : (
         /* ===== MASTER ===== */
@@ -336,7 +415,7 @@ export default function DashboardPage() {
 
           <div className="vc-sechead rise" style={{ animationDelay: ".12s" }}>
             <div className="eyebrow">Tất cả chương trình</div>
-            <span className="hint">bấm dòng có mũi tên để xem danh sách mã</span>
+            <span className="hint">bấm tên chương trình có mũi tên để xem danh sách mã</span>
           </div>
           <div className="vc-panel rise" style={{ animationDelay: ".14s" }}>
             <div className="vc-scroll">
@@ -350,10 +429,14 @@ export default function DashboardPage() {
                     const n = codeCountBy.get(d.id) || 0;
                     const drill = n >= 1;
                     return (
-                      <tr key={d.id} className={drill ? "clk" : ""} onClick={drill ? () => open(d.id) : undefined}>
-                        <td><div className="vc-pname">{d.title}{d.method ? <span className="m">{d.method}</span> : null}</div></td>
+                      <tr key={d.id}>
+                        <td>{drill ? (
+                          <button className="vc-program-button" onClick={() => open(d.id)}>
+                            <span className="vc-pname">{d.title}{d.method ? <span className="m">{d.method}</span> : null}</span>
+                          </button>
+                        ) : <div className="vc-pname">{d.title}{d.method ? <span className="m">{d.method}</span> : null}</div>}</td>
                         <td><span className="tag">{d.kind === "automatic" ? "Tự động" : "Mã"}</span></td>
-                        <td>{d.status === "ACTIVE" ? <span className="pill on"><span className="dotp" />Đang chạy</span> : <span className="pill off">Hết hạn</span>}</td>
+                        <td><span className={`pill ${d.status === "ACTIVE" ? "on" : "off"}`}>{d.status === "ACTIVE" && <span className="dotp" />}{discountStatusLabel(d.status)}</span></td>
                         <td className="r num">{d.kind === "automatic" ? "—" : d.totalCodes}</td>
                         <td className="r"><span className={`vc-u ${d.totalUsed > 0 ? "p" : "z"}`}>{d.totalUsed}</span></td>
                         <td className="r">{drill ? <span className="vc-go">{n} mã <IArrow /></span> : null}</td>
@@ -371,25 +454,35 @@ export default function DashboardPage() {
       )}
 
       <footer className="vc-foot">
-        Dữ liệu từ <b>Shopify</b> HUSSIO{data?.source === "snapshot" ? " (ảnh chụp demo)" : " (realtime)"} · bấm <b>Tải lại</b> để cập nhật.
+        {!data
+          ? "Đang xác định nguồn dữ liệu…"
+          : <>Dữ liệu HUSSIO <b>{data.source === "snapshot" ? "snapshot" : "Shopify realtime"}</b>{data.updatedAt ? ` · cập nhật ${data.updatedAt}` : ""}.</>}
       </footer>
 
       {/* ===== Modal xem / tải QR 1 mã ===== */}
       {qrRow && (
         <div className="vc-ov" onClick={() => setQrRow(null)}>
-          <div className="vc-qrmodal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Mã QR ${qrRow.code}`}>
-            <button className="vc-qrx" onClick={() => setQrRow(null)} aria-label="Đóng"><IClose /></button>
-            <div className="vc-qrbig"><QrCode text={voucherLink(qrRow.code)} size={220} margin={2} /></div>
+          <div
+            ref={qrDialogRef}
+            className="vc-qrmodal"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={trapModalFocus}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Mã QR ${qrRow.code}`}
+          >
+            <button ref={qrCloseRef} className="vc-qrx" onClick={() => setQrRow(null)} aria-label="Đóng"><IClose /></button>
+            <div className="vc-qrbig"><QrCode text={voucherLink(data?.publicDomain, qrRow.code)} size={220} margin={2} /></div>
             <div className="vc-qrcode mono">{qrRow.code}</div>
-            <div className="vc-qrlink">{voucherLink(qrRow.code)}</div>
+            <div className="vc-qrlink">{voucherLink(data?.publicDomain, qrRow.code)}</div>
             <div className="vc-qracts">
-              <button className="vc-btn" onClick={() => downloadQrPng(voucherLink(qrRow.code), `HUSSIO_QR_${qrRow.code}.png`)}>
+              <button className="vc-btn" onClick={() => downloadQrPng(voucherLink(data?.publicDomain, qrRow.code), `HUSSIO_QR_${qrRow.code}.png`)}>
                 <IDownload /> Tải PNG
               </button>
               <button className="vc-btn" onClick={() => copyLink(qrRow.code)}>
                 <ICopy /> {copied ? "Đã sao chép!" : "Sao chép link"}
               </button>
-              <a className="vc-btn ghost" href={voucherLink(qrRow.code)} target="_blank" rel="noopener noreferrer">Mở link</a>
+              <a className="vc-btn ghost" href={voucherLink(data?.publicDomain, qrRow.code)} target="_blank" rel="noopener noreferrer">Mở link</a>
             </div>
           </div>
         </div>

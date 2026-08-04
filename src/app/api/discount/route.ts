@@ -7,8 +7,14 @@ export const dynamic = "force-dynamic";
 // body: { id: string, action: "deactivate" | "delete" }
 export async function POST(req: NextRequest) {
   try {
+    if (process.env.ENABLE_SHOPIFY_MUTATIONS !== "true") {
+      return NextResponse.json(
+        { error: "Thao tác thay đổi Shopify đang bị khóa" },
+        { status: 403 }
+      );
+    }
     const body = (await req.json()) as { id?: string; action?: string };
-    const id = (body.id || "").trim();
+    const id = typeof body.id === "string" ? body.id.trim() : "";
     const action = body.action;
 
     if (!id) return NextResponse.json({ error: "Thiếu id discount" }, { status: 400 });

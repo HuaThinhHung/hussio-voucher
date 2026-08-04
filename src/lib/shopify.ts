@@ -4,6 +4,7 @@ import type { DiscountSummary, GenerateInput, GenerateResult, VoucherCode } from
 // ==== Đã cấu hình Shopify thật chưa? ====
 // Dùng để quyết định: có token thật -> đọc realtime; chưa có -> dùng snapshot demo.
 export function isShopifyConfigured(): boolean {
+  if (process.env.VOUCHER_DATA_SOURCE?.toLowerCase() === "snapshot") return false;
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
   const token = process.env.SHOPIFY_ADMIN_TOKEN;
   if (!domain || !token) return false;
@@ -15,7 +16,7 @@ export function isShopifyConfigured(): boolean {
 function cfg() {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
   const token = process.env.SHOPIFY_ADMIN_TOKEN;
-  const version = process.env.SHOPIFY_API_VERSION || "2025-01";
+  const version = process.env.SHOPIFY_API_VERSION || "2026-07";
   if (!domain || !token) {
     throw new Error(
       "Thiếu SHOPIFY_STORE_DOMAIN hoặc SHOPIFY_ADMIN_TOKEN. Kiểm tra file .env.local"
@@ -114,6 +115,7 @@ interface DiscountInner {
   usageLimit?: number | null;
   asyncUsageCount?: number;
   codesCount?: { count: number } | null;
+  tags?: string[];
 }
 interface DiscountNode {
   id: string;
@@ -180,7 +182,7 @@ export async function listVoucherDiscounts(): Promise<{
             id
             discount {
               __typename
-              ... on DiscountCodeBasic { title status usageLimit asyncUsageCount codesCount { count } }
+              ... on DiscountCodeBasic { title status usageLimit asyncUsageCount codesCount { count } tags }
               ... on DiscountCodeBxgy { title status asyncUsageCount codesCount { count } }
               ... on DiscountCodeFreeShipping { title status asyncUsageCount codesCount { count } }
               ... on DiscountAutomaticBasic { title status asyncUsageCount }
@@ -211,6 +213,9 @@ export async function listVoucherDiscounts(): Promise<{
     const d = n.discount;
     const title = d.title || "(không tên)";
     const kind: "code" | "automatic" = d.__typename.startsWith("DiscountCode") ? "code" : "automatic";
+    const isLoyalty =
+      d.tags?.some((tag) => tag.toLowerCase() === "loyalty") ||
+      title.toLocaleLowerCase("vi").includes("đổi điểm");
     discounts.push({
       id: n.id,
       title,
@@ -220,6 +225,7 @@ export async function listVoucherDiscounts(): Promise<{
       totalCodes: d.codesCount?.count ?? (kind === "code" ? 1 : 0),
       kind,
       method: methodOf(d.__typename),
+      category: isLoyalty ? "loyalty" : undefined,
     });
 
     // Chỉ kéo danh sách mã cho discount "Amount off order" (loại đang dùng cho voucher).
@@ -267,7 +273,7 @@ async function createBasicDiscount(
       title,
       code: firstCode,
       startsAt,
-      customerSelection: { all: true },
+      context: { all: true },
       customerGets: {
         value: { discountAmount: { amount: String(amount), appliesOnEachItem: false } },
         items: { all: true },

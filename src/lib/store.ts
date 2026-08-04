@@ -13,6 +13,7 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const FILE = path.join(DATA_DIR, "assignments.json");
 
 type Store = Record<string, Assignment>;
+let jsonWriteQueue: Promise<void> = Promise.resolve();
 
 // ---- JSON fallback ----
 async function ensureFile(): Promise<void> {
@@ -26,11 +27,13 @@ async function ensureFile(): Promise<void> {
 
 async function readJson(): Promise<Store> {
   await ensureFile();
+  const raw = await fs.readFile(FILE, "utf8");
   try {
-    const raw = await fs.readFile(FILE, "utf8");
     return JSON.parse(raw) as Store;
-  } catch {
-    return {};
+  } catch (error) {
+    throw new Error(
+      `Không đọc được data/assignments.json: ${error instanceof Error ? error.message : "JSON không hợp lệ"}`
+    );
   }
 }
 
@@ -40,23 +43,33 @@ async function upsertJson(input: {
   name?: string;
   note?: string;
 }): Promise<Assignment> {
-  const store = await readJson();
-  const prev = store[input.code];
-  const next: Assignment = {
-    code: input.code,
-    phone: input.phone ?? prev?.phone ?? "",
-    name: input.name ?? prev?.name ?? "",
-    note: input.note ?? prev?.note ?? "",
-    updatedAt: new Date().toISOString(),
-  };
-  store[input.code] = next;
-  await fs.writeFile(FILE, JSON.stringify(store, null, 2), "utf8");
-  return next;
+  let saved: Assignment | null = null;
+  const operation = jsonWriteQueue.then(async () => {
+    const store = await readJson();
+    const prev = store[input.code];
+    saved = {
+      code: input.code,
+      phone: input.phone ?? prev?.phone ?? "",
+      name: input.name ?? prev?.name ?? "",
+      note: input.note ?? prev?.note ?? "",
+      updatedAt: new Date().toISOString(),
+    };
+    store[input.code] = saved;
+    await fs.writeFile(FILE, JSON.stringify(store, null, 2), "utf8");
+  });
+
+  // Giữ queue hoạt động ngay cả khi một lần ghi lỗi; caller vẫn nhận đúng lỗi của operation.
+  jsonWriteQueue = operation.catch(() => undefined);
+  await operation;
+  if (!saved) throw new Error("Không lưu được thông tin gán voucher");
+  return saved;
 }
 
 // ---- Interface công khai (chọn backend theo env) ----
 export async function readAssignments(): Promise<Store> {
-  return db.isConfigured() ? db.readAssignments() : readJson();
+  if (db.isConfigured()) return db.readAssignments();
+  await jsonWriteQueue;
+  return readJson();
 }
 
 export async function upsertAssignment(input: {

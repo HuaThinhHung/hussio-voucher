@@ -16,9 +16,9 @@ const DD50K_ID = "gid://shopify/DiscountCodeNode/2245104271433";
 
 const discounts: DiscountSummary[] = [
   // ==== 3 bộ voucher đổi điểm (mỗi bộ 1000 mã random, dùng 1 lần) ====
-  { id: DD10K_ID, title: "Voucher đổi điểm - Giảm 10.000đ", status: "ACTIVE", usageLimit: 1, totalUsed: 0, totalCodes: 1000, kind: "code", method: "Giảm 10.000đ / đơn hàng" },
-  { id: DD30K_ID, title: "Voucher đổi điểm - Giảm 30.000đ", status: "ACTIVE", usageLimit: 1, totalUsed: 0, totalCodes: 1000, kind: "code", method: "Giảm 30.000đ / đơn hàng" },
-  { id: DD50K_ID, title: "Voucher đổi điểm - Giảm 50.000đ", status: "ACTIVE", usageLimit: 1, totalUsed: 0, totalCodes: 1000, kind: "code", method: "Giảm 50.000đ / đơn hàng" },
+  { id: DD10K_ID, title: "Voucher đổi điểm - Giảm 10.000đ", status: "ACTIVE", usageLimit: 1, totalUsed: 0, totalCodes: 1000, kind: "code", category: "loyalty", method: "Giảm 10.000đ / đơn hàng" },
+  { id: DD30K_ID, title: "Voucher đổi điểm - Giảm 30.000đ", status: "ACTIVE", usageLimit: 1, totalUsed: 0, totalCodes: 1000, kind: "code", category: "loyalty", method: "Giảm 30.000đ / đơn hàng" },
+  { id: DD50K_ID, title: "Voucher đổi điểm - Giảm 50.000đ", status: "ACTIVE", usageLimit: 1, totalUsed: 0, totalCodes: 1000, kind: "code", category: "loyalty", method: "Giảm 50.000đ / đơn hàng" },
 
   // ==== Các chương trình khác đang tồn tại trên store ====
   { id: "gid://shopify/DiscountAutomaticNode/2234541146185", title: "FREE SHIPPING CHO ĐƠN TỪ 250.000Đ", status: "ACTIVE", usageLimit: null, totalUsed: 99, totalCodes: 0, kind: "automatic", method: "Miễn phí vận chuyển" },

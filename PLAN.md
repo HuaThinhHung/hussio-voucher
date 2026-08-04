@@ -1,5 +1,8 @@
 # PLAN.md — Kế hoạch & spec dự án Dashboard Voucher HUSSIO
 
+> **Lưu ý:** đây là kế hoạch MVP lịch sử. Trạng thái và cách chạy hiện tại lấy theo `README.md`;
+> source hiện tập trung vào dashboard theo dõi, QR và export, không còn UI tạo voucher.
+
 > Tài liệu bàn giao cho Claude Code. Đọc `CLAUDE.md` trước để nắm context, rồi theo checklist dưới.
 > Trạng thái: **MVP đã dựng xong & build sạch** (typecheck + `next build` pass). Phần dưới chia
 > "Đã xong" và "Việc tiếp theo" kèm tiêu chí nghiệm thu.

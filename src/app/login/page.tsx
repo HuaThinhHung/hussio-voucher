@@ -24,10 +24,10 @@ export default function LoginPage() {
 
   useEffect(() => {
     const stored = localStorage.getItem("vc-theme") as "light" | "dark" | null;
-    const sys = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    const t = stored || sys;
-    setTheme(t);
-    document.documentElement.setAttribute("data-theme", t);
+    const nextTheme = stored || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTheme(nextTheme);
+    document.documentElement.setAttribute("data-theme", nextTheme);
   }, []);
 
   function toggleTheme() {

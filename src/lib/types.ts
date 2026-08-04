@@ -30,6 +30,7 @@ export interface DiscountSummary {
   // "code" = mã nhập tay; "automatic" = tự động (free ship, quà tặng app)
   kind?: "code" | "automatic";
   method?: string; // mô tả ngắn: "Giảm 10.000đ / đơn hàng"
+  category?: "loyalty";
 }
 
 export interface DashboardData {
@@ -37,6 +38,9 @@ export interface DashboardData {
   codes: VoucherCode[];
   // "live" = đọc realtime từ Shopify; "snapshot" = ảnh chụp demo (chưa cấu hình token)
   source?: "live" | "snapshot";
+  updatedAt?: string;
+  publicDomain?: string;
+  warning?: string;
 }
 
 export interface GenerateInput {
